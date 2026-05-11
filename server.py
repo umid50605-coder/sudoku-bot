@@ -2,6 +2,8 @@ from flask import Flask, render_template, jsonify, request
 import random
 import time
 import sqlite3
+import threading
+import os
 from database import db
 
 app = Flask(__name__)
@@ -135,9 +137,8 @@ def claim_daily_bonus():
     user_id = data['user_id']
     if db.can_claim_bonus(user_id):
         db.claim_bonus(user_id, 100)
-        return jsonify({'success': True, 'coins': 15, 'message': '🎁 15 tanga bonus oldingiz!'})
-    else:
-        return jsonify({'success': False, 'message': '⏳ Bugun bonus olgansiz!'})
+        return jsonify({'success': True, 'coins': 15})
+    return jsonify({'success': False})
 
 @app.route('/api/spend-coins', methods=['POST'])
 def spend_coins():
@@ -149,19 +150,13 @@ def spend_coins():
 def ad_view():
     data = request.json
     db.record_ad_view(data['user_id'])
-    return jsonify({'success': True, 'coins': 5, 'message': '+5 tanga'})
+    return jsonify({'success': True, 'coins': 5})
 
 @app.route('/api/duel-bot', methods=['POST'])
 def duel_bot():
     data = request.json
     result = db.duel_bot(data['user_id'])
     return jsonify(result)
-
-# ============ BONUS API ============
-@app.route('/api/bonus/<int:user_id>')
-def check_bonus(user_id):
-    can_claim = db.can_claim_bonus(user_id)
-    return jsonify({'can_claim': can_claim})
 
 # ============ TURNIR API ============
 @app.route('/api/tournaments')
@@ -180,20 +175,13 @@ def get_tournament(tournament_id):
 @app.route('/api/tournament/<int:tournament_id>/join', methods=['POST'])
 def join_tournament(tournament_id):
     data = request.json
-    user_id = data['user_id']
-    result = db.join_tournament(tournament_id, user_id)
-    messages = {
-        'success': '✅ Turnirga qo\'shildingiz!',
-        'already': '❌ Allaqachon qo\'shilgansiz!',
-        'no_coins': '❌ Tanga yetarli emas!',
-        'not_found': '❌ Turnir topilmadi!'
-    }
+    result = db.join_tournament(tournament_id, data['user_id'])
+    messages = {'success': 'Qoshildingiz!', 'already': 'Allaqachon qoshilgansiz!', 'no_coins': 'Tanga yetarli emas!', 'not_found': 'Turnir topilmadi!'}
     return jsonify({'result': result, 'message': messages.get(result, 'Xatolik')})
 
 @app.route('/api/tournament/<int:tournament_id>/leaderboard')
 def tournament_leaderboard(tournament_id):
-    leaderboard = db.get_tournament_leaderboard(tournament_id)
-    return jsonify(leaderboard)
+    return jsonify(db.get_tournament_leaderboard(tournament_id))
 
 @app.route('/api/tournament/<int:tournament_id>/finish', methods=['POST'])
 def finish_one_tournament(tournament_id):
@@ -205,39 +193,27 @@ def finish_all_tournaments():
     tournaments = db.get_active_tournaments()
     for t in tournaments:
         db.finish_tournament(t['id'])
-    return jsonify({'success': True, 'count': len(tournaments)})
-
-@app.route('/api/tournament/save-result', methods=['POST'])
-def save_tournament_result():
-    data = request.json
-    db.update_tournament_score(data['tournament_id'], data['user_id'], data['score'], data['time_spent'])
     return jsonify({'success': True})
 
 @app.route('/api/my-tournaments/<int:user_id>')
 def my_tournaments(user_id):
-    tournaments = db.get_user_tournaments(user_id)
-    return jsonify(tournaments)
+    return jsonify(db.get_user_tournaments(user_id))
 
-# ============ TURNIR YARATISH (ADMIN) ============
 @app.route('/api/tournament/quick', methods=['POST'])
 def create_quick_tournament():
-    data = request.json
-    name = data.get('name', '⚡ Tezkor turnir')
-    tid = db.create_tournament(name, 'quick', 'medium', 1, 25, 0)
+    tid = db.create_tournament('⚡ Quick', 'quick', 'medium', 1, 25, 0)
     return jsonify({'success': True, 'id': tid})
 
 @app.route('/api/tournament/daily', methods=['POST'])
 def create_daily_tournament():
-    data = request.json
-    name = data.get('name', '📅 Kunlik turnir')
-    tid = db.create_tournament(name, 'daily', 'hard', 24, 100, 0)
+    tid = db.create_tournament('📅 Daily', 'daily', 'hard', 24, 100, 0)
     return jsonify({'success': True, 'id': tid})
 
 # ============ ADMIN API ============
 @app.route('/api/admin/add-coins', methods=['POST'])
 def admin_add_coins():
     data = request.json
-    db.add_coins(data['user_id'], data['coins'], 'admin_bonus', 'Admin tomonidan qo\'shildi')
+    db.add_coins(data['user_id'], data['coins'], 'admin', 'Admin qoshdi')
     return jsonify({'success': True})
 
 @app.route('/api/admin/reset-coins', methods=['POST'])
@@ -245,7 +221,7 @@ def admin_reset_coins():
     data = request.json
     coins = db.get_user_coins(data['user_id'])
     if coins > 0:
-        db.spend_coins(data['user_id'], coins, 'admin_reset', 'Admin reset')
+        db.spend_coins(data['user_id'], coins, 'admin', 'Reset')
     return jsonify({'success': True})
 
 @app.route('/api/admin/bonus-all', methods=['POST'])
@@ -257,8 +233,40 @@ def admin_bonus_all():
     conn.close()
     return jsonify({'success': True})
 
+# ============ GURUH TURNIRI API ============
+@app.route('/api/group-tournament/create', methods=['POST'])
+def create_group_tournament():
+    data = request.json
+    tid = db.create_group_tournament(data['chat_id'], data['creator_id'], data.get('name', 'Turnir'), data.get('difficulty', 'medium'), data.get('max_players', 10), data.get('entry_fee', 0))
+    board, solution = generator.generate(data.get('difficulty', 'medium'))
+    db.start_group_tournament(tid, board, solution)
+    return jsonify({'success': True, 'tournament_id': tid, 'board': board})
+
+@app.route('/api/group-tournament/<int:tid>/join', methods=['POST'])
+def join_group_tournament(tid):
+    data = request.json
+    result = db.join_group_tournament(tid, data['user_id'], data.get('first_name', ''), data.get('username', ''))
+    return jsonify({'result': result})
+
+@app.route('/api/group-tournament/<int:tid>')
+def get_group_tournament(tid):
+    tournament = db.get_group_tournament(tid)
+    if tournament:
+        tournament['players'] = db.get_group_tournament_players(tid)
+        tournament['count'] = db.count_group_tournament_players(tid)
+    return jsonify(tournament or {})
+
 # ============ ISHGA TUSHIRISH ============
+def run_bot():
+    import bot
+    bot.main()
+
 if __name__ == '__main__':
-    print("🚀 Flask server ishga tushmoqda...")
-    print("📍 http://127.0.0.1:5000")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Botni alohida thread da ishga tushirish
+    bot_thread = threading.Thread(target=run_bot)
+    bot_thread.daemon = True
+    bot_thread.start()
+    
+    port = int(os.environ.get("PORT", 5000))
+    print(f"🚀 Flask server ishga tushmoqda... Port: {port}")
+    app.run(host='0.0.0.0', port=port)

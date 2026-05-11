@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Sudoku</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Outfit:wght@300;400;600;800&display=swap');
+
+  :root {
+    --bg: #0d0d1a;
+    --surface: #161628;
+    --surface2: #1e1e35;
+    --border: #2a2a4a;
+    --border-bold: #4a4a8a;
+    --accent: #7c6af7;
+    --accent2: #f76ac8;
+    --text: #e8e8f5;
+    --text-dim: #6b6b9a;
+    --orig: #a8b4f8;
+    --user: #f7c76a;
+    --selected-bg: #2d2050;
+    --selected-border: #7c6af7;
+    --correct: #6af7a8;
+    --error: #f76a6a;
+    --cell: min(9.5vw, 52px);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Outfit', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px 12px 24px;
+    overflow-x: hidden;
+  }
+
+  .header {
+    width: 100%;
+    max-width: 480px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .title {
+    font-family: 'Space Mono', monospace;
+    font-size: 22px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: 2px;
+  }
+  .status-badge {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 20px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .diff-row { display: flex; gap: 8px; margin-bottom: 16px; }
+  .diff-btn {
+    flex: 1; padding: 8px 0; border-radius: 10px;
+    border: 1.5px solid var(--border); background: var(--surface);
+    color: var(--text-dim); font-family: 'Outfit', sans-serif;
+    font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; max-width: 100px;
+  }
+  .diff-btn.active, .diff-btn:active { border-color: var(--accent); color: var(--text); background: var(--selected-bg); }
+  .diff-btn.easy.active   { border-color: #6af7a8; color: #6af7a8; }
+  .diff-btn.medium.active { border-color: #f7c76a; color: #f7c76a; }
+  .diff-btn.hard.active   { border-color: #f76a6a; color: #f76a6a; }
+
+  .timer-wrap {
+    width: calc(var(--cell) * 9 + 4px);
+    text-align: center;
+    margin-bottom: 10px;
+  }
+  .timer {
+    font-family: 'Space Mono', monospace;
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text);
+    background: var(--surface2);
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    padding: 8px 20px;
+    display: inline-block;
+    letter-spacing: 3px;
+  }
+  .timer.running { border-color: var(--accent); }
+  .timer.fast { border-color: #6af7a8; color: #6af7a8; }
+  .timer.slow { border-color: #f76a6a; color: #f76a6a; }
+
+  .board-wrap { position: relative; width: calc(var(--cell) * 9 + 4px); }
+  .board {
+    display: grid;
+    grid-template-columns: repeat(9, var(--cell));
+    grid-template-rows: repeat(9, var(--cell));
+    border: 2.5px solid var(--border-bold);
+    border-radius: 8px; overflow: hidden;
+    background: var(--border-bold); gap: 1px;
+  }
+
+  .cell {
+    width: var(--cell); height: var(--cell);
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Space Mono', monospace;
+    font-size: calc(var(--cell) * 0.42); font-weight: 700;
+    cursor: pointer; background: var(--surface);
+    transition: background 0.15s; position: relative; user-select: none;
+  }
+
+  .cell[data-col="2"], .cell[data-col="5"] { border-right: 2px solid var(--border-bold); }
+  .cell[data-row="2"], .cell[data-row="5"] { border-bottom: 2px solid var(--border-bold); }
+
+  .cell.original { color: var(--orig); }
+  .cell.user-filled { color: var(--user); }
+  .cell.empty { color: transparent; }
+  .cell.empty::after { content: '·'; color: var(--text-dim); font-size: calc(var(--cell) * 0.3); opacity: 0.4; }
+  .cell.selected { background: var(--selected-bg) !important; outline: 2px solid var(--accent); outline-offset: -2px; z-index: 2; }
+  .cell.same-num { background: #1e1e3a; }
+  .cell.same-group { background: #181830; }
+  .cell.error { color: var(--error) !important; animation: shake 0.5s; }
+  @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-3px)} 75%{transform:translateX(3px)} }
+
+  .numpad { margin-top: 16px; display: grid; grid-template-columns: repeat(9, 1fr); gap: 6px; width: calc(var(--cell) * 9 + 4px); }
+  .num-btn {
+    aspect-ratio: 1; border-radius: 10px;
+    border: 1.5px solid var(--border); background: var(--surface2);
+    color: var(--text); font-family: 'Space Mono', monospace;
+    font-size: clamp(14px, 4vw, 20px); font-weight: 700;
+    cursor: pointer; transition: all 0.15s;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .num-btn:active { background: var(--accent); border-color: var(--accent); transform: scale(0.92); }
+
+  .controls { margin-top: 14px; display: flex; gap: 10px; width: calc(var(--cell) * 9 + 4px); }
+  .ctrl-btn {
+    flex: 1; padding: 11px 0; border-radius: 12px;
+    border: 1.5px solid var(--border); background: var(--surface2);
+    color: var(--text); font-family: 'Outfit', sans-serif;
+    font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s;
+  }
+  .ctrl-btn.new-btn { border-color: var(--accent); color: var(--accent); }
+  .ctrl-btn.hint-btn { border-color: #f7c76a; color: #f7c76a; }
+  .ctrl-btn:active { opacity: 0.7; }
+
+  .progress-wrap { margin-top: 12px; width: calc(var(--cell) * 9 + 4px); }
+  .progress-bar { height: 4px; background: var(--border); border-radius: 4px; overflow: hidden; }
+  .progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 4px; transition: width 0.4s ease; }
+  .progress-text { font-size: 11px; color: var(--text-dim); margin-top: 4px; text-align: right; font-family: 'Space Mono', monospace; }
+
+  .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 100; align-items: center; justify-content: center; flex-direction: column; gap: 20px; }
+  .overlay.show { display: flex; }
+  .win-card { background: var(--surface2); border: 2px solid var(--accent); border-radius: 20px; padding: 32px 40px; text-align: center; }
+  .win-emoji { font-size: 56px; margin-bottom: 12px; }
+  .win-title { font-size: 26px; font-weight: 800; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 6px; }
+  .win-sub { color: var(--text-dim); font-size: 14px; margin-bottom: 20px; }
+  .win-btn { padding: 12px 32px; border-radius: 12px; border: none; background: linear-gradient(135deg, var(--accent), var(--accent2)); color: white; font-family: 'Outfit', sans-serif; font-size: 16px; font-weight: 700; cursor: pointer; }
+
+  .loader { display: none; position: fixed; inset: 0; background: var(--bg); z-index: 200; align-items: center; justify-content: center; }
+  .loader.show { display: flex; }
+  .spinner { width: 40px; height: 40px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="loader show" id="loader"><div class="spinner"></div></div>
+
+<div class="header">
+  <div class="title">SUDOKU</div>
+  <div class="status-badge" id="statusBadge">Yuklanyapti</div>
+</div>
+
+<div class="diff-row">
+  <button class="diff-btn easy" onclick="newGame('easy', true)">🟢 Oson</button>
+  <button class="diff-btn medium active" onclick="newGame('medium', true)">🟡 O'rta</button>
+  <button class="diff-btn hard" onclick="newGame('hard', true)">🔴 Qiyin</button>
+</div>
+
+<div class="timer-wrap">
+  <div class="timer" id="gameTimer">⏱ 00:00</div>
+</div>
+
+<div class="board-wrap">
+  <div class="board" id="board"></div>
+</div>
+
+<div class="numpad" id="numpad">
+  <button class="num-btn" onclick="inputNum(1)">1</button>
+  <button class="num-btn" onclick="inputNum(2)">2</button>
+  <button class="num-btn" onclick="inputNum(3)">3</button>
+  <button class="num-btn" onclick="inputNum(4)">4</button>
+  <button class="num-btn" onclick="inputNum(5)">5</button>
+  <button class="num-btn" onclick="inputNum(6)">6</button>
+  <button class="num-btn" onclick="inputNum(7)">7</button>
+  <button class="num-btn" onclick="inputNum(8)">8</button>
+  <button class="num-btn" onclick="inputNum(9)">9</button>
+</div>
+
+<div class="controls">
+  <button class="ctrl-btn" onclick="eraseCell()">⌫ O'chirish</button>
+  <button class="ctrl-btn hint-btn" onclick="useHint()">💡 Yordam (3)</button>
+  <button class="ctrl-btn new-btn" onclick="newGame(currentDiff, true)">🔄 Yangi</button>
+</div>
+
+<div class="progress-wrap">
+  <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+  <div class="progress-text" id="progressText">0 / 81</div>
+</div>
+
+<div class="overlay" id="winOverlay">
+  <div class="win-card">
+    <div class="win-emoji">🏆</div>
+    <div class="win-title">Tabriklaymiz!</div>
+    <div class="win-sub">Siz sudokuni yechdingiz!</div>
+    <button class="win-btn" onclick="closeWin()">Yangi o'yin</button>
+  </div>
+</div>
+
+<script>
+  const tg = window.Telegram?.WebApp;
+  if (tg) { tg.ready(); tg.expand(); }
+
+  // ========== TARJIMALAR ==========
+  const TRANSLATIONS = {
+    uz: {
+      title: "SUDOKU",
+      loading: "Yuklanyapti",
+      playing: "O'ynayapti",
+      continuing: "Davom etmoqda",
+      easy: "🟢 Oson",
+      medium: "🟡 O'rta",
+      hard: "🔴 Qiyin",
+      hint: "💡 Yordam",
+      erase: "⌫ O'chirish",
+      newGame: "🔄 Yangi",
+      winTitle: "Tabriklaymiz!",
+      winSub: "Siz sudokuni yechdingiz!",
+      winTime: "Vaqt",
+      winHints: "yordam",
+      winBtn: "Yangi o'yin",
+      alertHintsEmpty: "❌ Yordamlar tugadi!",
+      alertCellOriginal: "Bu katak asl raqam!",
+      alertCellFilled: "Bu katak to'ldirilgan!",
+      alertNoEmpty: "Bo'sh katak qolmadi!",
+      alertServerError: "Server bilan aloqa yo'q."
+    },
+    ru: {
+      title: "СУДОКУ",
+      loading: "Загрузка",
+      playing: "Играет",
+      continuing: "Продолжение",
+      easy: "🟢 Лёгкий",
+      medium: "🟡 Средний",
+      hard: "🔴 Сложный",
+      hint: "💡 Подсказка",
+      erase: "⌫ Стереть",
+      newGame: "🔄 Новая",
+      winTitle: "Поздравляем!",
+      winSub: "Вы решили судоку!",
+      winTime: "Время",
+      winHints: "подсказок",
+      winBtn: "Новая игра",
+      alertHintsEmpty: "❌ Подсказки закончились!",
+      alertCellOriginal: "Это исходная цифра!",
+      alertCellFilled: "Ячейка заполнена!",
+      alertNoEmpty: "Нет пустых ячеек!",
+      alertServerError: "Нет связи с сервером."
+    },
+    en: {
+      title: "SUDOKU",
+      loading: "Loading",
+      playing: "Playing",
+      continuing: "Continue",
+      easy: "🟢 Easy",
+      medium: "🟡 Medium",
+      hard: "🔴 Hard",
+      hint: "💡 Hint",
+      erase: "⌫ Erase",
+      newGame: "🔄 New",
+      winTitle: "Congratulations!",
+      winSub: "You solved the sudoku!",
+      winTime: "Time",
+      winHints: "hints",
+      winBtn: "New Game",
+      alertHintsEmpty: "❌ No hints left!",
+      alertCellOriginal: "This is an original number!",
+      alertCellFilled: "Cell already filled!",
+      alertNoEmpty: "No empty cells!",
+      alertServerError: "Server connection error."
+    }
+  };
+
+  let currentLang = 'uz';
+
+  function setLang(lang) {
+    if (TRANSLATIONS[lang]) {
+      currentLang = lang;
+      localStorage.setItem('sudoku_lang', lang);
+      updateUILanguage();
+    }
+  }
+
+  function t(key) {
+    return TRANSLATIONS[currentLang]?.[key] || TRANSLATIONS['uz'][key] || key;
+  }
+
+  function updateUILanguage() {
+    document.querySelector('.title').textContent = t('title');
+    document.querySelector('.diff-btn.easy').textContent = t('easy');
+    document.querySelector('.diff-btn.medium').textContent = t('medium');
+    document.querySelector('.diff-btn.hard').textContent = t('hard');
+    document.querySelector('.ctrl-btn.new-btn').textContent = t('newGame');
+    document.querySelector('.win-title').textContent = t('winTitle');
+    document.querySelector('.win-btn').textContent = t('winBtn');
+    
+    const hintBtn = document.querySelector('.hint-btn');
+    if (hintBtn) hintBtn.textContent = `${t('hint')} (${hintsLeft})`;
+    
+    const eraseBtns = document.querySelectorAll('.ctrl-btn:not(.hint-btn):not(.new-btn)');
+    if (eraseBtns.length > 0) eraseBtns[0].textContent = t('erase');
+  }
+
+  function initLanguage() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlLang = urlParams.get('lang');
+    if (urlLang && TRANSLATIONS[urlLang]) {
+      setLang(urlLang);
+      return;
+    }
+    if (tg?.initDataUnsafe?.user?.language_code) {
+      const tgLang = tg.initDataUnsafe.user.language_code;
+      if (tgLang === 'ru') setLang('ru');
+      else if (tgLang === 'en') setLang('en');
+      else setLang('uz');
+    } else {
+      const savedLang = localStorage.getItem('sudoku_lang');
+      if (savedLang) setLang(savedLang);
+    }
+  }
+
+  // ========== O'ZGARUVCHILAR ==========
+  let board = [], solution = [], original = [];
+  let selectedCell = null;
+  let currentDiff = 'medium';
+  let startTime = null;
+  let timerInterval = null;
+  let gameSeconds = 0;
+  let hintsLeft = 3;
+
+  // ========== SAVE / LOAD ==========
+  function saveGameState() {
+    const gameState = {
+      board: board,
+      solution: solution,
+      original: original,
+      currentDiff: currentDiff,
+      startTime: startTime,
+      selectedCell: selectedCell,
+      gameSeconds: gameSeconds,
+      hintsLeft: hintsLeft
+    };
+    localStorage.setItem('sudoku_game', JSON.stringify(gameState));
+  }
+
+  function loadGameState() {
+    const saved = localStorage.getItem('sudoku_game');
+    if (saved) {
+      try {
+        const gameState = JSON.parse(saved);
+        board = gameState.board;
+        solution = gameState.solution;
+        original = gameState.original;
+        currentDiff = gameState.currentDiff;
+        startTime = gameState.startTime;
+        selectedCell = gameState.selectedCell;
+        gameSeconds = gameState.gameSeconds || 0;
+        hintsLeft = gameState.hintsLeft ?? 3;
+        updateHintsDisplay();
+        return true;
+      } catch(e) {
+        console.log('Save load error:', e);
+      }
+    }
+    return false;
+  }
+
+  function clearGameState() {
+    localStorage.removeItem('sudoku_game');
+  }
+
+  // ========== TIMER ==========
+  function startTimer() {
+    stopTimer();
+    gameSeconds = 0;
+    updateTimerDisplay();
+    document.getElementById('gameTimer').classList.add('running');
+    document.getElementById('gameTimer').classList.remove('fast', 'slow');
+    
+    timerInterval = setInterval(() => {
+      gameSeconds++;
+      updateTimerDisplay();
+      if (gameSeconds > 300) {
+        document.getElementById('gameTimer').classList.add('slow');
+        document.getElementById('gameTimer').classList.remove('fast');
+      } else if (gameSeconds > 120) {
+        document.getElementById('gameTimer').classList.add('fast');
+        document.getElementById('gameTimer').classList.remove('slow');
+      }
+    }, 1000);
+  }
+
+  function stopTimer() {
+    if (timerInterval) {
+      clearInterval(timerInterval);
+      timerInterval = null;
+    }
+    document.getElementById('gameTimer').classList.remove('running', 'fast', 'slow');
+  }
+
+  function updateTimerDisplay() {
+    const mins = Math.floor(gameSeconds / 60).toString().padStart(2, '0');
+    const secs = (gameSeconds % 60).toString().padStart(2, '0');
+    document.getElementById('gameTimer').textContent = `⏱ ${mins}:${secs}`;
+  }
+
+  function getElapsedTime() {
+    return gameSeconds;
+  }
+
+  function startTimerFromSaved() {
+    stopTimer();
+    updateTimerDisplay();
+    document.getElementById('gameTimer').classList.add('running');
+    timerInterval = setInterval(() => {
+      gameSeconds++;
+      updateTimerDisplay();
+      saveGameState();
+      if (gameSeconds > 300) {
+        document.getElementById('gameTimer').classList.add('slow');
+        document.getElementById('gameTimer').classList.remove('fast');
+      } else if (gameSeconds > 120) {
+        document.getElementById('gameTimer').classList.add('fast');
+        document.getElementById('gameTimer').classList.remove('slow');
+      }
+    }, 1000);
+  }
+
+  // ========== SAVE RESULT ==========
+  function saveGameResult(completed) {
+    const user = tg?.initDataUnsafe?.user;
+    if (!user) return;
+    const timeSpent = getElapsedTime();
+    const diffScores = { 'easy': 100, 'medium': 200, 'hard': 300 };
+    const score = completed ? (diffScores[currentDiff] || 200) : 0;
+    fetch('/api/save-game', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: user.id,
+        username: user.username || '',
+        first_name: user.first_name,
+        difficulty: currentDiff,
+        time_spent: timeSpent,
+        completed: completed,
+        score: score
+      })
+    }).catch(e => console.log('Save error:', e));
+  }
+
+  // ========== NEW GAME ==========
+  async function newGame(diff, forceNew = false) {
+    if (!forceNew && loadGameState()) {
+      currentDiff = diff || currentDiff;
+      document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
+      document.querySelector(`.diff-btn.${currentDiff}`).classList.add('active');
+      document.getElementById('loader').classList.remove('show');
+      updateTimerDisplay();
+      startTimerFromSaved();
+      renderBoard();
+      updateProgress();
+      updateHintsDisplay();
+      setStatus(t('continuing'));
+      return;
+    }
+
+    currentDiff = diff || currentDiff;
+    document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`.diff-btn.${currentDiff}`).classList.add('active');
+    document.getElementById('loader').classList.add('show');
+    selectedCell = null;
+    clearGameState();
+    stopTimer();
+
+    try {
+      const res = await fetch(`/api/new-game?difficulty=${diff}`);
+      const data = await res.json();
+      board = data.board.map(r => [...r]);
+      solution = data.solution;
+      original = data.board.map(r => [...r]);
+      startTime = Date.now();
+      hintsLeft = 3;
+      updateHintsDisplay();
+      startTimer();
+      saveGameState();
+      renderBoard();
+      updateProgress();
+    } catch(e) {
+      alert(t('alertServerError'));
+    }
+
+    document.getElementById('loader').classList.remove('show');
+    setStatus(t('playing'));
+  }
+
+  // ========== RENDER ==========
+  function renderBoard() {
+    const boardEl = document.getElementById('board');
+    boardEl.innerHTML = '';
+    for (let r = 0; r < 9; r++) {
+      for (let c = 0; c < 9; c++) {
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.dataset.row = r;
+        cell.dataset.col = c;
+        const val = board[r][c];
+        const isOrig = original[r][c] !== 0;
+        if (val !== 0) {
+          cell.textContent = val;
+          cell.classList.add(isOrig ? 'original' : 'user-filled');
+        } else {
+          cell.classList.add('empty');
+        }
+        cell.addEventListener('click', () => selectCell(r, c));
+        boardEl.appendChild(cell);
+      }
+    }
+    highlightRelated();
+  }
+
+  function selectCell(r, c) {
+    if (original[r][c] !== 0) {
+      selectedCell = null;
+      highlightRelated(r, c);
+      saveGameState();
+      return;
+    }
+    selectedCell = { r, c };
+    highlightRelated(r, c);
+    saveGameState();
+    if (tg?.HapticFeedback) tg.HapticFeedback.selectionChanged();
+  }
+
+  function highlightRelated(selR, selC) {
+    const cells = document.querySelectorAll('.cell');
+    cells.forEach(cell => {
+      cell.classList.remove('selected', 'same-group', 'same-num');
+    });
+    const sr = selectedCell?.r ?? selR;
+    const sc = selectedCell?.c ?? selC;
+    if (sr === undefined) return;
+    const selVal = board[sr]?.[sc];
+    cells.forEach(cell => {
+      const r = +cell.dataset.row;
+      const c = +cell.dataset.col;
+      if (r === sr && c === sc) {
+        cell.classList.add('selected');
+      } else if (r === sr || c === sc || (Math.floor(r/3)===Math.floor(sr/3) && Math.floor(c/3)===Math.floor(sc/3))) {
+        cell.classList.add('same-group');
+      }
+      if (selVal && selVal !== 0 && board[r][c] === selVal) {
+        cell.classList.add('same-num');
+      }
+    });
+  }
+
+  // ========== INPUT NUMBER ==========
+  function inputNum(n) {
+    if (!selectedCell) return;
+    const { r, c } = selectedCell;
+    if (original[r][c] !== 0) return;
+    if (solution[r][c] === n) {
+      board[r][c] = n;
+      renderBoard();
+      updateProgress();
+      saveGameState();
+      if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+      if (isComplete()) {
+        stopTimer();
+        const mins = Math.floor(gameSeconds / 60).toString().padStart(2, '0');
+        const secs = (gameSeconds % 60).toString().padStart(2, '0');
+        document.querySelector('.win-sub').textContent = `${t('winTime')}: ${mins}:${secs} (${t('winHints')}: ${3-hintsLeft})`;
+        saveGameResult(true);
+        clearGameState();
+        setTimeout(() => {
+          document.getElementById('winOverlay').classList.add('show');
+        }, 300);
+      }
+    } else {
+      if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+      const allCells = document.querySelectorAll('.cell');
+      allCells.forEach(cell => {
+        if (+cell.dataset.row === r && +cell.dataset.col === c) {
+          cell.classList.add('error');
+          setTimeout(() => cell.classList.remove('error'), 600);
+        }
+      });
+    }
+    selectedCell = { r, c };
+    highlightRelated();
+  }
+
+  // ========== HINT ==========
+  function useHint() {
+    if (hintsLeft <= 0) {
+      alert(t('alertHintsEmpty'));
+      return;
+    }
+    if (selectedCell) {
+      const { r, c } = selectedCell;
+      if (original[r][c] !== 0) {
+        alert(t('alertCellOriginal'));
+        return;
+      }
+      if (board[r][c] !== 0) {
+        alert(t('alertCellFilled'));
+        return;
+      }
+      board[r][c] = solution[r][c];
+      hintsLeft--;
+      renderBoard();
+      updateProgress();
+      saveGameState();
+      updateHintsDisplay();
+      if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('warning');
+      if (isComplete()) {
+        stopTimer();
+        saveGameResult(true);
+        clearGameState();
+        setTimeout(() => {
+          document.getElementById('winOverlay').classList.add('show');
+        }, 300);
+      }
+    } else {
+      const emptyCells = [];
+      for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < 9; c++) {
+          if (board[r][c] === 0 && original[r][c] === 0) {
+            emptyCells.push({r, c});
+          }
+        }
+      }
+      if (emptyCells.length === 0) {
+        alert(t('alertNoEmpty'));
+        return;
+      }
+      const rand = emptyCells[Math.floor(Math.random() * emptyCells.length)];
+      board[rand.r][rand.c] = solution[rand.r][rand.c];
+      hintsLeft--;
+      renderBoard();
+      updateProgress();
+      saveGameState();
+      updateHintsDisplay();
+    }
+  }
+
+  function updateHintsDisplay() {
+    const hintBtn = document.querySelector('.hint-btn');
+    if (hintBtn) {
+      hintBtn.textContent = `${t('hint')} (${hintsLeft})`;
+      if (hintsLeft <= 0) hintBtn.style.opacity = '0.5';
+    }
+  }
+
+  function eraseCell() {
+    if (!selectedCell) return;
+    const { r, c } = selectedCell;
+    if (original[r][c] !== 0) return;
+    board[r][c] = 0;
+    renderBoard();
+    updateProgress();
+    saveGameState();
+    selectedCell = { r, c };
+    highlightRelated();
+  }
+
+  function updateProgress() {
+    let filled = 0;
+    for (let r = 0; r < 9; r++)
+      for (let c = 0; c < 9; c++)
+        if (board[r][c] !== 0) filled++;
+    document.getElementById('progressFill').style.width = Math.round(filled/81*100) + '%';
+    document.getElementById('progressText').textContent = filled + ' / 81';
+  }
+
+  function isComplete() {
+    for (let r = 0; r < 9; r++)
+      for (let c = 0; c < 9; c++)
+        if (board[r][c] !== solution[r][c]) return false;
+    return true;
+  }
+
+  function closeWin() {
+    document.getElementById('winOverlay').classList.remove('show');
+    newGame(currentDiff, true);
+  }
+
+  function setStatus(txt) {
+    document.getElementById('statusBadge').textContent = txt;
+  }
+
+  // ========== INIT ==========
+  initLanguage();
+  updateUILanguage();
+  
+  if (loadGameState()) {
+    document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`.diff-btn.${currentDiff}`).classList.add('active');
+    document.getElementById('loader').classList.remove('show');
+    updateTimerDisplay();
+    startTimerFromSaved();
+    renderBoard();
+    updateProgress();
+    updateHintsDisplay();
+    setStatus(t('continuing'));
+  } else {
+    newGame('medium', true);
+  }
+</script>
+</body>
+</html>

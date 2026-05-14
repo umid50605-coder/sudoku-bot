@@ -1,5 +1,0 @@
-venv/ 
-__pycache__/ 
-sudoku.db 
-cloudflared-windows-amd64.exe 
-ngrok.exe 

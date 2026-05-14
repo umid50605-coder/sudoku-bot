@@ -259,8 +259,14 @@ def get_group_tournament(tid):
 # ============ ISHGA TUSHIRISH ============
 # Botni darhol ishga tushirish (gunicorn uchun)
 def run_bot():
-    import bot
-    bot.main()
+    try:
+        print("🤖 Bot ishga tushmoqda...")
+        import bot
+        bot.main()
+    except Exception as e:
+        print(f"❌ Bot xatolik: {e}")
+        import traceback
+        traceback.print_exc()
 
 # Botni alohida threadda ishga tushirish
 import threading
